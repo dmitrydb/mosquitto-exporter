@@ -116,6 +116,11 @@ func runServer(c *cli.Context) {
 	opts := mqtt.NewClientOptions()
 	opts.SetCleanSession(true)
 	opts.AddBroker(c.String("endpoint"))
+	opts.SetPingTimeout(120 * time.Second)
+	opts.SetConnectTimeout(120 * time.Second)
+	opts.SetKeepAlive(120 * time.Second)
+	opts.SetMaxReconnectInterval(120 * time.Second)
+// 	opts.SetConnectRetryInterval(60 * time.Second)
 
 	if c.String("client-id") != "" {
 		opts.SetClientID(c.String("client-id"))
@@ -152,15 +157,28 @@ func runServer(c *cli.Context) {
 	opts.OnConnect = func(client mqtt.Client) {
 		log.Printf("Connected to %s", c.String("endpoint"))
 		// subscribe on every (re)connect
-		token := client.Subscribe("$SYS/#", 0, func(_ mqtt.Client, msg mqtt.Message) {
+        // Subscribe to all "$SYS/broker/#" topics
+		token := client.Subscribe("$SYS/broker/#", 0, func(_ mqtt.Client, msg mqtt.Message) {
 			processUpdate(msg.Topic(), string(msg.Payload()))
 		})
-		if !token.WaitTimeout(10 * time.Second) {
-			log.Println("Error: Timeout subscribing to topic $SYS/#")
+		if !token.WaitTimeout(60 * time.Second) {
+			log.Println("Error: Timeout subscribing to topic $SYS/broker/#")
 		}
 		if err := token.Error(); err != nil {
-			log.Printf("Failed to subscribe to topic $SYS/#: %s", err)
+			log.Printf("Failed to subscribe to topic $SYS/broker/#: %s", err)
 		}
+
+        // unsubscribe on every (re)connect
+        // Unsubscribe from "$SYS/broker/connection/+/state" topics to prevent auth plugin overloading because of
+        // big number of mosquitto clients. Auth plugin checks ACL endpoint for each "$SYS/broker/connection/+/state"
+        // topic when it wants to sent message to exporter
+//         token = client.Unsubscribe("$SYS/broker/connection/+/state")
+//         if !token.WaitTimeout(10 * time.Second) {
+//             log.Println("Error: Timeout unsubscribing to topic $SYS/broker/connection/+/state")
+//         }
+//         if err := token.Error(); err != nil {
+//             log.Printf("Failed to unsubscribe to topic $SYS/broker/connection/+/state: %s", err)
+//         }
 	}
 	opts.OnConnectionLost = func(client mqtt.Client, err error) {
 		log.Printf("Error: Connection to %s lost: %s", c.String("endpoint"), err)
